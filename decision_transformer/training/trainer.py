@@ -1,11 +1,10 @@
+import time
+
 import numpy as np
 import torch
 
-import time
-
 
 class Trainer:
-
     def __init__(self, model, optimizer, batch_size, get_batch, loss_fn, scheduler=None, eval_fns=None):
         self.model = model
         self.optimizer = optimizer
@@ -32,7 +31,7 @@ class Trainer:
             if self.scheduler is not None:
                 self.scheduler.step()
 
-        logs['time/training'] = time.time() - train_start
+        logs["time/training"] = time.time() - train_start
 
         eval_start = time.time()
 
@@ -40,21 +39,21 @@ class Trainer:
         for eval_fn in self.eval_fns:
             outputs = eval_fn(self.model)
             for k, v in outputs.items():
-                logs[f'evaluation/{k}'] = v
+                logs[f"evaluation/{k}"] = v
 
-        logs['time/total'] = time.time() - self.start_time
-        logs['time/evaluation'] = time.time() - eval_start
-        logs['training/train_loss_mean'] = np.mean(train_losses)
-        logs['training/train_loss_std'] = np.std(train_losses)
+        logs["time/total"] = time.time() - self.start_time
+        logs["time/evaluation"] = time.time() - eval_start
+        logs["training/train_loss_mean"] = np.mean(train_losses)
+        logs["training/train_loss_std"] = np.std(train_losses)
 
         for k in self.diagnostics:
             logs[k] = self.diagnostics[k]
 
         if print_logs:
-            print('=' * 80)
-            print(f'Iteration {iter_num}')
+            print("=" * 80)
+            print(f"Iteration {iter_num}")
             for k, v in logs.items():
-                print(f'{k}: {v}')
+                print(f"{k}: {v}")
 
         return logs
 
@@ -63,13 +62,22 @@ class Trainer:
         state_target, action_target, reward_target = torch.clone(states), torch.clone(actions), torch.clone(rewards)
 
         state_preds, action_preds, reward_preds = self.model.forward(
-            states, actions, rewards, masks=None, attention_mask=attention_mask, target_return=returns,
+            states,
+            actions,
+            rewards,
+            masks=None,
+            attention_mask=attention_mask,
+            target_return=returns,
         )
 
         # note: currently indexing & masking is not fully correct
         loss = self.loss_fn(
-            state_preds, action_preds, reward_preds,
-            state_target[:,1:], action_target, reward_target[:,1:],
+            state_preds,
+            action_preds,
+            reward_preds,
+            state_target[:, 1:],
+            action_target,
+            reward_target[:, 1:],
         )
         self.optimizer.zero_grad()
         loss.backward()

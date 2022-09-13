@@ -1,14 +1,12 @@
 import pickle
-import random
 
 import numpy as np
 import torch
 
 import gym
-from decision_transformer.evaluation.evaluate_episodes import evaluate_episode_rtg
 from decision_transformer.models.decision_transformer import DecisionTransformer
 from decision_transformer.training.seq_trainer import SequenceTrainer
-
+from decision_transformer.evaluation.evaluate_episodes import evaluate_episode_rtg
 
 def discount_cumsum(x, gamma):
     discount_cumsum = np.zeros_like(x)
@@ -19,13 +17,13 @@ def discount_cumsum(x, gamma):
 
 
 def experiment():
-    device = "cuda"
+    device = "cpu" #"cuda"
     env = gym.make("Hopper-v3")
     max_ep_len = 1000
     env_targets = [3600, 1800]  # evaluation conditioning targets
     scale = 1000.0  # normalization for rewards/returns
 
-    state_dim = env.observation_space.shape[0]
+    obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
 
     # load dataset
@@ -74,40 +72,37 @@ def experiment():
             p=p_sample,  # reweights so we sample according to timesteps
         )
 
-        observations, actions, rewards, dones, reward_to_go, timesteps, mask = [], [], [], [], [], [], []
+        observations, actions, rewards, reward_to_go, timesteps, mask = [], [], [], [], [], []
 
         sorted_trajectories = [trajectories[sorted_inds[batch_idx]] for batch_idx in batch_inds]
 
         ep_lengths = np.array([trajectory["rewards"].shape[0] for trajectory in sorted_trajectories])
         start_idxs = np.random.randint(0, ep_lengths - max_len)
-        _observations = {
-            key: np.array(
-                [
-                    trajectory[key][start_idx : start_idx + max_len]
-                    for start_idx, trajectory in zip(start_idxs, sorted_trajectories)
-                ],
-                dtype=np.float32,
-            )
-            for key in sorted_trajectories[0].keys()
-        }
+        # _observations = {
+        #     key: np.array(
+        #         [
+        #             trajectory[key][start_idx : start_idx + max_len]
+        #             for start_idx, trajectory in zip(start_idxs, sorted_trajectories)
+        #         ],
+        #         dtype=np.float32,
+        #     )
+        #     for key in sorted_trajectories[0].keys()
+        # }
 
         # idxs = np.random.randint(0, ep_length - 1)
-        # __observations = [trajectory["observations"][si : si + max_len].reshape(1, -1, state_dim) for trajectory in sorted_trajectories]
+        # __observations = [trajectory["observations"][si : si + max_len].reshape(1, -1, obs_dim) for trajectory in sorted_trajectories]
         # alt_observations =
 
         for batch_idx, si in zip(batch_inds, start_idxs):
             trajectory = trajectories[sorted_inds[batch_idx]]
 
             # get sequences from dataset
-            observations.append(trajectory["observations"][si : si + max_len].reshape(1, -1, state_dim))
+            observations.append(trajectory["observations"][si : si + max_len].reshape(1, -1, obs_dim))
             actions.append(trajectory["actions"][si : si + max_len].reshape(1, -1, act_dim))
             rewards.append(trajectory["rewards"][si : si + max_len].reshape(1, -1, 1))
-            if "terminals" in trajectory:
-                dones.append(trajectory["terminals"][si : si + max_len].reshape(1, -1))
-            else:
-                dones.append(trajectory["dones"][si : si + max_len].reshape(1, -1))
             timesteps.append(np.arange(si, si + observations[-1].shape[1]).reshape(1, -1))
             timesteps[-1][timesteps[-1] >= max_ep_len] = max_ep_len - 1  # padding cutoff
+            assert not (timesteps[-1] >= max_ep_len).any()
             reward_to_go.append(
                 discount_cumsum(trajectory["rewards"][si:], gamma=1.0)[: observations[-1].shape[1] + 1].reshape(1, -1, 1)
             )
@@ -116,11 +111,10 @@ def experiment():
 
             # padding and state + reward normalization
             tlen = observations[-1].shape[1]
-            observations[-1] = np.concatenate([np.zeros((1, max_len - tlen, state_dim)), observations[-1]], axis=1)
+            observations[-1] = np.concatenate([np.zeros((1, max_len - tlen, obs_dim)), observations[-1]], axis=1)
             observations[-1] = (observations[-1] - state_mean) / state_std
             actions[-1] = np.concatenate([np.ones((1, max_len - tlen, act_dim)) * -10.0, actions[-1]], axis=1)
-            rewards[-1] = np.concatenate([np.zeros((1, max_len - tlen, 1)), rewards[-1]], axis=1)
-            dones[-1] = np.concatenate([np.ones((1, max_len - tlen)) * 2, dones[-1]], axis=1)
+            # rewards[-1] = np.concatenate([np.zeros((1, max_len - tlen, 1)), rewards[-1]], axis=1)
             reward_to_go[-1] = np.concatenate([np.zeros((1, max_len - tlen, 1)), reward_to_go[-1]], axis=1) / scale
             timesteps[-1] = np.concatenate([np.zeros((1, max_len - tlen)), timesteps[-1]], axis=1)
             mask.append(np.concatenate([np.zeros((1, max_len - tlen)), np.ones((1, tlen))], axis=1))
@@ -128,21 +122,20 @@ def experiment():
         observations = torch.from_numpy(np.concatenate(observations, axis=0)).to(dtype=torch.float32, device=device)
         actions = torch.from_numpy(np.concatenate(actions, axis=0)).to(dtype=torch.float32, device=device)
         rewards = torch.from_numpy(np.concatenate(rewards, axis=0)).to(dtype=torch.float32, device=device)
-        dones = torch.from_numpy(np.concatenate(dones, axis=0)).to(dtype=torch.long, device=device)
         reward_to_go = torch.from_numpy(np.concatenate(reward_to_go, axis=0)).to(dtype=torch.float32, device=device)
         timesteps = torch.from_numpy(np.concatenate(timesteps, axis=0)).to(dtype=torch.long, device=device)
         mask = torch.from_numpy(np.concatenate(mask, axis=0)).to(device=device)
 
-        return observations, actions, rewards, dones, reward_to_go, timesteps, mask
+        return observations, actions, rewards, reward_to_go, timesteps, mask
 
     def eval_episodes(target_rew):
         def fn(model):
             returns, lengths = [], []
             for _ in range(num_eval_episodes):
                 with torch.no_grad():
-                    ret, length = evaluate_episode_reward_to_go(
+                    ret, length = evaluate_episode_rtg(
                         env,
-                        state_dim,
+                        obs_dim,
                         act_dim,
                         model,
                         max_ep_len=max_ep_len,
@@ -167,11 +160,11 @@ def experiment():
     dropout = 0.1
     hidden_size = 128
     model = DecisionTransformer(
-        state_dim=state_dim,
+        state_dim=obs_dim,
         act_dim=act_dim,
+        hidden_size=hidden_size,
         max_length=K,
         max_ep_len=max_ep_len,
-        hidden_size=hidden_size,
         n_layer=3,
         n_head=1,
         n_inner=4 * hidden_size,

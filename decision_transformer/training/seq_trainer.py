@@ -6,7 +6,7 @@ from decision_transformer.training.trainer import Trainer
 
 class SequenceTrainer(Trainer):
     def train_step(self):
-        states, actions, rewards, dones, rtg, timesteps, attention_mask = self.get_batch(self.batch_size)
+        states, actions, rewards, rtg, timesteps, attention_mask = self.get_batch(self.batch_size)
         action_target = torch.clone(actions)
 
         state_preds, action_preds, reward_preds = self.model.forward(

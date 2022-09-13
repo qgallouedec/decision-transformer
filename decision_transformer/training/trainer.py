@@ -58,7 +58,7 @@ class Trainer:
         return logs
 
     def train_step(self):
-        states, actions, rewards, dones, attention_mask, returns = self.get_batch(self.batch_size)
+        states, actions, rewards, attention_mask, returns = self.get_batch(self.batch_size)
         state_target, action_target, reward_target = torch.clone(states), torch.clone(actions), torch.clone(rewards)
 
         state_preds, action_preds, reward_preds = self.model.forward(
